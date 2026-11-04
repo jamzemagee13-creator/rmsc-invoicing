@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Move old RMSC data</title>
+<style>
+  :root { --ink: #0d0d14; --blue: #2f2bd3; --bg: #f3f4f7; --line: #e3e5eb; --muted: #5a5e6c; --green: #12793f; --red: #c2301d; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; background: var(--bg); color: #12131a; line-height: 1.5; }
+  main { max-width: 560px; margin: 0 auto; padding: 24px 16px 48px; }
+  h1 { font-size: 24px; margin: 0 0 8px; }
+  .card { background: #fff; border: 1px solid var(--line); border-radius: 12px; padding: 18px; margin-top: 16px; }
+  ol { padding-left: 20px; color: var(--muted); }
+  li { margin-bottom: 6px; }
+  button { font: inherit; font-weight: 600; min-height: 46px; padding: 0 18px; border-radius: 10px; border: 0; background: var(--blue); color: #fff; cursor: pointer; width: 100%; }
+  .ok { color: var(--green); font-weight: 600; }
+  .bad { color: var(--red); font-weight: 600; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Move data from the old invoicing app</h1>
+  <p>The old app kept invoices inside the browser. This page saves them into a backup file that the new app can read.</p>
+
+  <div class="card">
+    <ol>
+      <li>Put this file in the <strong>same folder</strong> as the old <em>RMSC Invoicing.html</em> file.</li>
+      <li>Open it in the <strong>same browser</strong> you used for the old app (for example Chrome).</li>
+      <li>Tap <strong>Save backup file</strong> below.</li>
+      <li>In the new app go to <strong>Settings → Backup → Restore backup</strong> and pick that file.</li>
+    </ol>
+  </div>
+
+  <div class="card" id="result">Checking…</div>
+</main>
+<script>
+(function () {
+  var box = document.getElementById('result');
+  var raw = null;
+  try { raw = localStorage.getItem('garageInvoiceState'); } catch (e) { /* blocked */ }
+  if (!raw) {
+    box.innerHTML = '<p class="bad">No old invoices found in this browser.</p><p>Make sure this file is in the same folder as the old app and opened in the same browser. If the old app was used on a different device, do this on that device.</p>';
+    return;
+  }
+  var data;
+  try { data = JSON.parse(raw); } catch (e) { box.innerHTML = '<p class="bad">The old data is damaged and could not be read.</p>'; return; }
+  var inv = (data.invoices || []).length, cus = (data.customers || []).length;
+  box.innerHTML = '<p class="ok">Found ' + inv + ' invoice' + (inv === 1 ? '' : 's') + ' and ' + cus + ' customer' + (cus === 1 ? '' : 's') + '.</p><button id="dl">Save backup file</button>';
+  document.getElementById('dl').onclick = function () {
+    var d = new Date();
+    var name = 'RMSC-old-app-data-' + d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0') + '.json';
+    var url = URL.createObjectURL(new Blob([raw], { type: 'application/json' }));
+    var a = document.createElement('a'); a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(function () { URL.revokeObjectURL(url); }, 4000);
+    box.insertAdjacentHTML('beforeend', '<p style="margin-top:12px">Saved as <strong>' + name + '</strong>. Now restore it in the new app.</p>');
+  };
+})();
+</script>
+</body>
+</html>
