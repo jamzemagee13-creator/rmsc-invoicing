@@ -20,7 +20,7 @@ It works on a phone or a computer, installs to the home screen like a normal app
 1. Create a free account at [github.com](https://github.com) if you don't have one.
 2. Click **New repository**, name it, for example `rmsc-invoicing`, and choose **Public**. (Free GitHub Pages needs a public repo. Only the app's code goes there; no customer data ever does.)
 3. Click **uploading an existing file**, then drag in **everything inside this folder** (`index.html`, `sw.js`, `manifest.webmanifest`, `migrate-old-data.html`, `README.md`, and the `css`, `js` and `icons` folders). Click **Commit changes**.
-4. Go to **Settings → Pages**. Under *Build and deployment* choose **Deploy from a branch**, branch **main**, folder **/ (root)**, then **Save**.
+4. In the **repository** (not your account settings), click the **Settings** tab at the top right of the repo, then **Pages** in the left menu. Under *Build and deployment* choose **Deploy from a branch**, branch **main**, folder **/ (root)**, then **Save**.
 5. After a minute or two the app is live at `https://YOUR-USERNAME.github.io/rmsc-invoicing/`.
 
 ### Installing it on a phone

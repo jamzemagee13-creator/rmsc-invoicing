@@ -359,6 +359,8 @@ details[open] .jobs-preview { display: none; }
 .mini-link { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-top: 1px solid var(--line); }
 .mini-link:first-of-type { border-top: 0; }
 .mini-link .grow { flex: 1; min-width: 0; }
+.mini-link .vlink { display: flex; align-items: center; gap: 10px; }
+.mini-link .vlink:hover .grow { color: var(--blue); }
 .mini-link small { display: block; color: var(--muted); font-size: 13px; }
 .btn-row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
 .btn-row .btn { flex: 1; }

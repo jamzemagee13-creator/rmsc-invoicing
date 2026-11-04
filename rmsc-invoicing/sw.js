@@ -1,6 +1,6 @@
 /* Service worker: lets the app open and work with no signal.
    Bump VERSION whenever you change any app file so phones pick up the update. */
-const VERSION = 'rmsc-v2.0.0';
+const VERSION = 'rmsc-v2.1.0';
 const SHELL = [
   './', 'index.html', 'css/app.css', 'js/app.js', 'js/logo.js', 'manifest.webmanifest',
   'icons/icon-192.png', 'icons/icon-512.png', 'icons/maskable-512.png', 'icons/apple-touch-icon.png'

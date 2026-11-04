@@ -3,7 +3,7 @@
 (function () {
 'use strict';
 
-const APP_VERSION = '2.0.0';
+const APP_VERSION = '2.1.0';
 const STORE_KEY = 'rmsc-invoicing-v2';
 const OLD_KEY = 'garageInvoiceState';          // used by the original single-file version
 const WIP_KEY = 'rmsc-editor-wip';             // unfinished invoice/quote (crash/close recovery)
@@ -140,6 +140,7 @@ function normalise(d) {
     doc.vehicle = { reg: '', make: '', year: '', mileage: '', ...(doc.vehicle || {}) };
     doc.items.forEach(i => { if (!i.id) i.id = uid(); });
   });
+  out.customers.forEach(c => { c.vehicles = Array.isArray(c.vehicles) ? c.vehicles : []; });
   return out;
 }
 
@@ -259,6 +260,19 @@ function linkCustomer(doc, d = db) {
     ['name', 'email', 'phone', 'address'].forEach(k => { if (c[k] && c[k].trim()) rec[k] = c[k].trim(); });
   }
   doc.customerId = rec.id;
+  if (doc.vehicle && normReg(doc.vehicle.reg)) addCustomerVehicle(rec, doc.vehicle);
+}
+
+/** Add a vehicle to a customer's saved list (or update its details if it's already there). */
+function addCustomerVehicle(c, v) {
+  if (!Array.isArray(c.vehicles)) c.vehicles = [];
+  const key = normReg(v.reg);
+  if (!key) return null;
+  let rec = c.vehicles.find(x => normReg(x.reg) === key);
+  if (!rec) { rec = { reg: String(v.reg).toUpperCase().trim(), make: '', year: '' }; c.vehicles.push(rec); }
+  if (v.make) rec.make = String(v.make).trim();
+  if (v.year) rec.year = String(v.year).trim();
+  return rec;
 }
 
 function nextNumber(kind) {
@@ -285,6 +299,23 @@ function vehicleIndex() {
     if (d.customer && d.customer.name) v.lastCustomer = d.customer;
     v.lastDate = d.date;
   }
+  // Vehicles saved on customer records (including ones with no invoices yet)
+  for (const c of db.customers) {
+    for (const sv of (c.vehicles || [])) {
+      const key = normReg(sv.reg);
+      if (!key) continue;
+      let v = map.get(key);
+      if (!v) {
+        v = { key, reg: sv.reg, make: sv.make || '', year: sv.year || '', mileage: '', docs: [], customerIds: new Set([c.id]), lastDate: '', lastCustomerId: c.id, lastCustomer: c };
+        map.set(key, v);
+      } else {
+        if (!v.make && sv.make) v.make = sv.make;
+        if (!v.year && sv.year) v.year = sv.year;
+        v.customerIds.add(c.id);
+        if (!v.lastCustomerId) { v.lastCustomerId = c.id; v.lastCustomer = c; }
+      }
+    }
+  }
   return map;
 }
 
@@ -298,6 +329,7 @@ function customerStats(c) {
     invoices++;
     const k = calc(d); spent += k.paid; if (k.balance > 0) owed += k.balance;
   });
+  (c.vehicles || []).forEach(v => { const k = normReg(v.reg); if (k && !regs.has(k)) regs.set(k, v); });
   return { docs, spent: round2(spent), owed: round2(owed), invoices, vehicles: Array.from(regs.values()) };
 }
 
@@ -439,7 +471,7 @@ function vehicleRow(v) {
   return `<a class="row" href="#/vehicle/${encodeURIComponent(v.key)}">
     <div>${ic('car')}</div>
     <div class="row-main"><div class="row-title"><span class="plate">${esc(v.reg)}</span><span class="row-name">${esc([v.make, v.year].filter(Boolean).join(' ') || 'Vehicle')}</span></div>
-    <div class="row-sub">${plural(v.docs.length, 'visit')} · last ${fmtDate(v.lastDate)}${v.lastCustomer ? ' · ' + esc(v.lastCustomer.name) : ''}</div></div>
+    <div class="row-sub">${v.docs.length ? `${plural(v.docs.length, 'visit')} · last ${fmtDate(v.lastDate)}` : 'No visits yet'}${v.lastCustomer ? ' · ' + esc(v.lastCustomer.name) : ''}</div></div>
     ${ic('chevRight', 'chev')}</a>`;
 }
 
@@ -597,7 +629,10 @@ function pageCustomers() {
     let list = db.customers.slice().sort((a, b) => a.name.localeCompare(b.name));
     if (q) {
       const regOwners = new Set();
-      if (qr) db.docs.forEach(d => { if (d.customerId && normReg(d.vehicle.reg).includes(qr)) regOwners.add(d.customerId); });
+      if (qr) {
+        db.docs.forEach(d => { if (d.customerId && normReg(d.vehicle.reg).includes(qr)) regOwners.add(d.customerId); });
+        db.customers.forEach(c => { if ((c.vehicles || []).some(v => normReg(v.reg).includes(qr))) regOwners.add(c.id); });
+      }
       list = list.filter(c => c.name.toLowerCase().includes(q) || (c.email || '').toLowerCase().includes(q) || (qp.length >= 4 && normPhone(c.phone).includes(qp)) || regOwners.has(c.id));
     }
     $('#list-summary').textContent = list.length ? plural(list.length, 'customer') : '';
@@ -632,8 +667,13 @@ function pageCustomer(id) {
           <div class="kv"><div><span>Invoices</span><b>${s.invoices}</b></div><div><span>Paid</span><b>${money(s.spent)}</b></div><div><span>Owed</span><b class="${s.owed > 0 ? 'red' : ''}">${money(s.owed)}</b></div></div>
           <div class="btn-row"><a class="btn btn-primary" href="#/new/invoice?customer=${c.id}">${ic('plus')}Invoice</a><a class="btn" href="#/new/quote?customer=${c.id}">${ic('plus')}Quote</a></div>
         </div>
-        <div class="card"><div class="card-title">${ic('car')}Vehicles</div>
-          ${s.vehicles.length ? s.vehicles.map(v => { const vi = vix.get(normReg(v.reg)); return `<a class="mini-link" href="#/vehicle/${encodeURIComponent(normReg(v.reg))}"><span class="plate">${esc(v.reg)}</span><span class="grow">${esc(vi && vi.make || v.make || '')}<small>${vi ? plural(vi.docs.length, 'visit') : ''}</small></span>${ic('chevRight', 'chev')}</a>`; }).join('') : '<p class="muted small" style="margin:0">No vehicles yet.</p>'}
+        <div class="card"><div class="card-title">${ic('car')}Vehicles<span class="spacer"></span><button class="btn btn-sm" data-act="vehicle-add" data-id="${c.id}">${ic('plus')}Add vehicle</button></div>
+          ${s.vehicles.length ? s.vehicles.map(v => {
+            const key = normReg(v.reg), vi = vix.get(key);
+            const visits = vi ? vi.docs.filter(d => d.customerId === c.id).length : 0;
+            return `<div class="mini-link"><a class="grow vlink" href="#/vehicle/${encodeURIComponent(key)}"><span class="plate">${esc(v.reg)}</span><span class="grow">${esc([vi && vi.make || v.make, vi && vi.year || v.year].filter(Boolean).join(' ') || 'Vehicle')}<small>${visits ? plural(visits, 'visit') : 'No visits yet'}</small></span></a>
+              ${visits ? ic('chevRight', 'chev') : `<button class="icon-btn danger" data-act="vehicle-remove" data-id="${c.id}" data-reg="${esc(key)}" aria-label="Remove ${esc(v.reg)}">${ic('x')}</button>`}</div>`;
+          }).join('') : `<p class="muted small" style="margin:0">No vehicles yet. Add one, or it'll be added automatically when you invoice it.</p>`}
         </div>
         <button class="btn btn-danger" data-act="customer-delete" data-id="${c.id}">${ic('trash')}Delete customer</button>
       </div>
@@ -653,8 +693,24 @@ function customerModal(c) {
       <div class="field"><label for="cm-phone">Phone</label><input id="cm-phone" type="tel" value="${esc(c.phone)}" autocomplete="off"></div>
       <div class="field"><label for="cm-email">Email</label><input id="cm-email" type="email" value="${esc(c.email)}" autocomplete="off"></div>
       <div class="field"><label for="cm-address">Address</label><textarea id="cm-address" rows="2">${esc(c.address)}</textarea></div>
+      ${isNew ? `<div class="grid2"><div class="field"><label for="cm-reg">Vehicle reg</label><input id="cm-reg" type="text" class="reg-input" placeholder="Optional" autocapitalize="characters" spellcheck="false" oninput="this.value=this.value.toUpperCase()"></div>
+        <div class="field"><label for="cm-make">Make &amp; model</label><input id="cm-make" type="text" autocapitalize="words"></div></div>` : ''}
     </div>`,
     actions: `<button class="btn" data-act="modal-close">Cancel</button><button class="btn btn-primary" data-act="customer-save" data-id="${esc(c.id)}">Save</button>`
+  });
+}
+
+function vehicleModal(c, v) {
+  const isNew = !v;
+  v = v || { reg: '', make: '', year: '' };
+  openModal({
+    title: isNew ? `Add vehicle for ${firstName(c.name)}` : `Edit ${v.reg}`,
+    body: `<div class="fields">
+      <div class="field"><label for="vm-reg">Registration *</label><input id="vm-reg" type="text" class="reg-input" value="${esc(v.reg)}" placeholder="AB12 CDE" autocapitalize="characters" spellcheck="false" oninput="this.value=this.value.toUpperCase()" ${isNew ? '' : 'readonly'}></div>
+      <div class="field"><label for="vm-make">Make &amp; model</label><input id="vm-make" type="text" value="${esc(v.make)}" placeholder="Ford Focus 1.6" autocapitalize="words"></div>
+      <div class="field"><label for="vm-year">Year</label><input id="vm-year" type="text" inputmode="numeric" maxlength="4" value="${esc(v.year)}" placeholder="2019"></div>
+    </div>`,
+    actions: `<button class="btn" data-act="modal-close">Cancel</button><button class="btn btn-primary" data-act="vehicle-save" data-id="${c.id}">${ic('check')}Save vehicle</button>`
   });
 }
 
@@ -675,11 +731,13 @@ function pageVehicle(key) {
           <h2 style="margin-top:14px;font-size:22px">${esc(v.make || 'Unknown make')}${v.year ? ' <span class="muted">' + esc(v.year) + '</span>' : ''}</h2>
           <div class="kv"><div><span>Visits</span><b>${v.docs.length}</b></div><div><span>Mileage</span><b>${fmtInt(v.mileage) || '–'}</b></div><div><span>Billed</span><b>${money(spent)}</b></div></div>
           ${owner ? `<a class="mini-link" style="margin-top:12px;border-top:1px solid var(--line)" href="#/customer/${owner.id}"><div class="avatar">${esc(initials(owner.name))}</div><span class="grow">${esc(owner.name)}<small>${esc(owner.phone || '')}</small></span>${ic('chevRight', 'chev')}</a>` : ''}
-          <div class="btn-row"><a class="btn btn-primary" href="#/new/invoice?reg=${encodeURIComponent(key)}">${ic('plus')}Invoice</a><a class="btn" href="#/new/quote?reg=${encodeURIComponent(key)}">${ic('plus')}Quote</a></div>
+          <div class="btn-row"><a class="btn btn-primary" href="#/new/invoice?reg=${encodeURIComponent(key)}">${ic('plus')}Invoice</a><a class="btn" href="#/new/quote?reg=${encodeURIComponent(key)}">${ic('plus')}Quote</a>
+            ${owner ? `<button class="btn" data-act="vehicle-edit" data-id="${owner.id}" data-reg="${esc(key)}">${ic('edit')}Edit</button>` : ''}</div>
         </div>
       </div>
       <div><div class="section-head"><h2>Service history</h2></div>
-        <div class="rows">${docs.map(d => {
+        ${docs.length ? '' : `<div class="card">${emptyState('car', 'No visits yet for this vehicle.', `<a class="btn btn-primary" href="#/new/invoice?reg=${encodeURIComponent(key)}">Start an invoice</a>`)}</div>`}
+        <div class="rows" ${docs.length ? '' : 'hidden'}>${docs.map(d => {
           const c = calc(d);
           return `<a class="tl" href="#/doc/${d.id}"><div class="tl-top"><strong>${fmtDate(d.date)}</strong>${badge(statusOf(d))}<span class="grow"></span><strong class="num">${money(c.total)}</strong></div>
             <div class="small muted">${esc(d.number)}${d.vehicle.mileage ? ' · ' + fmtInt(d.vehicle.mileage) + ' miles' : ''}${d.kind === 'quote' ? ' · quote' : ''}</div>
@@ -990,10 +1048,12 @@ function updateRegHint() {
   const d = editor.doc, box = $('#reg-hint');
   const key = normReg(d.vehicle.reg);
   const v = key && editor.vindex.get(key);
-  if (v && v.docs.some(x => x.id !== d.id)) {
+  if (v && (v.docs.some(x => x.id !== d.id) || !v.docs.length)) {
     const owner = v.lastCustomer ? v.lastCustomer.name : '';
     const needsFill = (!d.vehicle.make && v.make) || (!d.customer.name && owner);
-    box.innerHTML = `<div class="hint">${ic('clock')}<div class="hint-body"><strong>Seen before</strong> – ${esc([v.make, v.year].filter(Boolean).join(' ') || 'vehicle')} · ${plural(v.docs.length, 'visit')} · last ${fmtDate(v.lastDate)}${v.mileage ? ' at ' + fmtInt(v.mileage) + ' miles' : ''}${owner ? ' · ' + esc(owner) : ''}</div>
+    const seen = v.docs.length ? `<strong>Seen before</strong> – ${esc([v.make, v.year].filter(Boolean).join(' ') || 'vehicle')} · ${plural(v.docs.length, 'visit')} · last ${fmtDate(v.lastDate)}${v.mileage ? ' at ' + fmtInt(v.mileage) + ' miles' : ''}`
+      : `<strong>On file</strong> – ${esc([v.make, v.year].filter(Boolean).join(' ') || 'vehicle')}`;
+    box.innerHTML = `<div class="hint">${ic('clock')}<div class="hint-body">${seen}${owner ? ' · ' + esc(owner) : ''}</div>
       ${needsFill ? '<button type="button" class="btn btn-sm btn-primary" data-act="reg-fill">Fill in details</button>' : ''}</div>`;
     return;
   }
@@ -1585,7 +1645,12 @@ Object.assign(ACTIONS, {
     const vals = { name, email, phone: $('#cm-phone').value.trim(), address: $('#cm-address').value.trim() };
     let c = el.dataset.id && getCustomer(el.dataset.id);
     if (c) Object.assign(c, vals);
-    else { c = { id: uid(), ...vals, createdAt: new Date().toISOString() }; db.customers.push(c); }
+    else {
+      c = { id: uid(), ...vals, vehicles: [], createdAt: new Date().toISOString() };
+      const reg = $('#cm-reg') && $('#cm-reg').value;
+      if (normReg(reg)) addCustomerVehicle(c, { reg, make: $('#cm-make').value });
+      db.customers.push(c);
+    }
     if (save()) { closeModal(); toast('Customer saved', 'success'); if (!el.dataset.id) location.hash = '#/customer/' + c.id; else rerender(); }
   },
   'customer-delete': el => {
@@ -1595,6 +1660,39 @@ Object.assign(ACTIONS, {
     db.customers = db.customers.filter(x => x.id !== c.id);
     db.docs.forEach(d => { if (d.customerId === c.id) d.customerId = ''; });
     if (save()) { toast('Customer deleted'); location.hash = '#/customers'; }
+  },
+
+  // vehicles on customers
+  'vehicle-add': el => { const c = getCustomer(el.dataset.id); if (c) vehicleModal(c, null); },
+  'vehicle-edit': el => {
+    const c = getCustomer(el.dataset.id); if (!c) return;
+    const key = el.dataset.reg, vi = vehicleIndex().get(key);
+    const saved = (c.vehicles || []).find(x => normReg(x.reg) === key);
+    vehicleModal(c, { reg: (saved || vi || {}).reg || key, make: (saved && saved.make) || (vi && vi.make) || '', year: (saved && saved.year) || (vi && vi.year) || '' });
+  },
+  'vehicle-save': el => {
+    const c = getCustomer(el.dataset.id); if (!c) return;
+    const reg = $('#vm-reg').value.trim().toUpperCase(), key = normReg(reg);
+    if (key.length < 2) { toast('Enter the registration', 'error'); $('#vm-reg').focus(); return; }
+    const isNew = !$('#vm-reg').readOnly;
+    if (isNew) {
+      if ((c.vehicles || []).some(x => normReg(x.reg) === key)) { toast(`${reg} is already on ${firstName(c.name)}'s list`, 'error'); return; }
+      const other = db.customers.find(x => x.id !== c.id && (x.vehicles || []).some(v => normReg(v.reg) === key));
+      if (other && !confirm(`${reg} is also saved under ${other.name}. Move it to ${c.name}?`)) return;
+      if (other) other.vehicles = other.vehicles.filter(v => normReg(v.reg) !== key);
+    }
+    const rec = addCustomerVehicle(c, { reg, make: $('#vm-make').value, year: $('#vm-year').value });
+    // allow clearing make/year when editing
+    rec.make = $('#vm-make').value.trim(); rec.year = $('#vm-year').value.trim();
+    if (save()) { closeModal(); toast(`${reg} saved`, 'success'); rerender(); }
+  },
+  'vehicle-remove': el => {
+    const c = getCustomer(el.dataset.id); if (!c) return;
+    const key = el.dataset.reg;
+    const v = (c.vehicles || []).find(x => normReg(x.reg) === key);
+    if (!confirm(`Remove ${v ? v.reg : key} from ${c.name}?`)) return;
+    c.vehicles = (c.vehicles || []).filter(x => normReg(x.reg) !== key);
+    if (save()) { toast('Vehicle removed'); rerender(); }
   },
 
   // editor
@@ -1706,7 +1804,8 @@ window.addEventListener('appinstalled', () => { deferredInstall = null; toast('I
 function registerSW() {
   if (!('serviceWorker' in navigator) || !/^https?:$/.test(location.protocol)) return;
   let reloading = false;
-  navigator.serviceWorker.addEventListener('controllerchange', () => { if (reloading) return; reloading = true; location.reload(); });
+  const hadController = !!navigator.serviceWorker.controller; // first visit: don't reload when offline mode switches on
+  navigator.serviceWorker.addEventListener('controllerchange', () => { if (reloading || !hadController) return; reloading = true; location.reload(); });
   navigator.serviceWorker.register('sw.js').then(reg => {
     swReg = reg;
     const offer = w => toast('A new version is ready', '', 15000, { label: 'Update', fn: () => w.postMessage({ type: 'SKIP_WAITING' }) });
